@@ -74,13 +74,9 @@ git clone https://github.com/Insightz/wildbook-ia.git      # only needed for Run
 ```bash
 cd ~/Wildbook
 
+# The template already contains everything the carp compose needs (WBIA_DB_URI
+# is in there). Its defaults are fine for local dev. No edits required.
 cp devops/development/_env.template devops/development/.env
-# add the WBIA + Houston vars the carp compose expects:
-cat >> devops/development/.env <<'EOF'
-WBIA_DB_URI=postgresql://wbia:development@db/wbia
-HOUSTON_CLIENT_ID=
-HOUSTON_CLIENT_SECRET=
-EOF
 
 printf 'PUBLIC_URL=/react/\nSITE_NAME=My Local Wildbook\n' > frontend/.env
 
