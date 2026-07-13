@@ -1,0 +1,179 @@
+# Reconciled single-file dev stack for trying carp identification.
+# Combines the base stack (db + wildbook + opensearch + smtp) with the WBIA
+# image-analysis container, and points Wildbook's IA config at that container.
+#
+# It fixes the two traps in the stock files:
+#   1. docker-compose-wbia.yml ships WITHOUT opensearch, but identification's
+#      matching-set query needs it. This file includes it.
+#   2. Avoids the messy two-file `-f a.yml -f b.yml` overlay (duplicate ports /
+#      differing db images).
+#
+# Run from the Wildbook repo's devops/development/ directory (so the relative
+# .dockerfiles/ mounts resolve):
+#     docker compose -f docker-compose.carp.yml up
+# Then: http://localhost:81/  (login tomcat / tomcat123)
+#
+# Requires a .env in this directory (copy from _env.template). Add these lines
+# if they are not already present:
+#     WBIA_DB_URI=postgresql://wbia:development@db/wbia
+#     HOUSTON_CLIENT_ID=
+#     HOUSTON_CLIENT_SECRET=
+
+services:
+  db:
+    image: pgvector/pgvector:pg13
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 60
+    labels:
+      - autoheal=true
+    user: postgres
+    volumes:
+      - db-pgdata-var:/var/lib/postgresql/data
+      - .dockerfiles/db/initdb.d/:/docker-entrypoint-initdb.d/
+      - .dockerfiles/db/postgresql.conf:/etc/postgresql/postgresql.conf
+    networks:
+      - intranet
+    ports:
+      - 5433:5432
+    command: -c config_file=/etc/postgresql/postgresql.conf
+    environment:
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD}"
+      WBIA_DB_NAME: "${WBIA_DB_NAME}"
+      WBIA_DB_USER: "${WBIA_DB_USER}"
+      WBIA_DB_PASSWORD: "${WBIA_DB_PASSWORD}"
+      WILDBOOK_DB_NAME: "${WILDBOOK_DB_NAME}"
+      WILDBOOK_DB_USER: "${WILDBOOK_DB_USER}"
+      WILDBOOK_DB_PASSWORD: "${WILDBOOK_DB_PASSWORD}"
+
+  wildbook:
+    image: tomcat:9.0.113-jre17-temurin-jammy
+    depends_on:
+      db:
+        condition: service_healthy
+    labels:
+      - autoheal=true
+    entrypoint: /docker-entrypoint.sh
+    volumes:
+      - .dockerfiles/docker-entrypoint.sh:/docker-entrypoint.sh
+      - .dockerfiles/tomcat/server.xml:/usr/local/tomcat/conf/server.xml
+      - .dockerfiles/tomcat/watermark.png:/usr/local/tomcat/watermark.png
+      # Carp config: species (Cyprinus carpio + common/mirror/koi iaClasses),
+      # HotSpotter identification, and venue 164 (Grand Lac de Roly).
+      - .dockerfiles/tomcat/IA-carp.json:/usr/local/tomcat/webapps/wildbook_data_dir/WEB-INF/classes/bundles/IA.json
+      - .dockerfiles/tomcat/IA-wbia.properties:/usr/local/tomcat/webapps/wildbook_data_dir/WEB-INF/classes/bundles/IA.properties
+      - .dockerfiles/tomcat/commonConfiguration.properties:/usr/local/tomcat/webapps/wildbook_data_dir/WEB-INF/classes/bundles/commonConfiguration.properties
+      - .dockerfiles/tomcat/locationID-carp.json:/usr/local/tomcat/webapps/wildbook_data_dir/WEB-INF/classes/bundles/locationID.json
+      - "$WILDBOOK_BASE_DIR/webapps/:/usr/local/tomcat/webapps/"
+      - "$WILDBOOK_BASE_DIR/logs/:/usr/local/tomcat/logs/"
+    networks:
+      - intranet
+    ports:
+      - "81:8080"
+    environment:
+      DB_USER: "${WILDBOOK_DB_USER}"
+      DB_PASSWORD: "${WILDBOOK_DB_PASSWORD}"
+      DB_CONNECTION_URL: "${WILDBOOK_DB_CONNECTION_URL}"
+      JAVA_OPTS: "-Djava.awt.headless=true -Xms4096m -Xmx4096m"
+
+  opensearch:
+    image: opensearchproject/opensearch:3.1.0
+    healthcheck:
+      test: ["CMD-SHELL", "curl --silent --fail 127.0.0.1:9200/_cluster/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 60
+    labels:
+      - autoheal=true
+    volumes:
+      - opensearch-var1:/usr/share/opensearch/data
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    networks:
+      - intranet
+    ports:
+      - 9200:9200
+      - 9300:9300
+    environment:
+      - plugins.security.disabled=true
+      - node.name=opensearch
+      - cluster.initial_master_nodes=opensearch
+      - bootstrap.memory_lock=true
+      - cluster.routing.allocation.disk.threshold_enabled=${ES_THRESHOLD:-true}
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+      - "OPENSEARCH_INITIAL_ADMIN_PASSWORD=${OPENSEARCH_INITIAL_ADMIN_PASSWORD}"
+
+  smtp:
+    image: boky/postfix
+    networks:
+      - intranet
+    ports:
+      - $MAIL_PORT:587
+    volumes:
+      - .dockerfiles/smtp/dkim-keys:/etc/opendkim/keys
+    environment:
+      - "HOSTNAME=${MAIL_HOSTNAME}"
+      - "ALLOWED_SENDER_DOMAINS=${MAIL_ALLOWED_SENDER_DOMAINS}"
+      - "RELAYHOST=${MAIL_RELAYHOST}"
+      - "RELAYHOST_USERNAME=${MAIL_RELAYHOST_USERNAME}"
+      - "RELAYHOST_PASSWORD=${MAIL_RELAYHOST_PASSWORD}"
+
+  wbia:
+    # Public image = fine for Rungs 1-2 (exploring + HotSpotter matching, which
+    # needs NO trained model). For carp detection/labeler training (Rung 3),
+    # replace this with an image you build from your Insightz/wildbook-ia fork:
+    #   cd wildbook-ia/devops && ./build.sh wbia-base wbia-provision wbia
+    #   (then set image: your-tag/wbia:latest)
+    image: wildme/wbia:nightly
+    command: ["--db-uri", "${WBIA_DB_URI}"]
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - wbia-database-var:/data/db
+      - wbia-cache-var:/cache
+    networks:
+      - intranet
+    ports:
+      - "82:5000"
+    environment:
+      WBIA_DB_URI: "${WBIA_DB_URI}"
+      HOUSTON_CLIENT_ID: "${HOUSTON_CLIENT_ID:-}"
+      HOUSTON_CLIENT_SECRET: "${HOUSTON_CLIENT_SECRET:-}"
+    # --- OPTIONAL GPU (Rung 3: faster detection + training) -------------------
+    # HotSpotter (Rung 2) does NOT need the GPU. Enable this only after
+    #   `docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi`
+    # lists your RTX 4070, AND you are running a CUDA-enabled wbia image (the
+    # public one may be CPU-only). Then uncomment:
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+
+  autoheal:
+    image: willfarrell/autoheal
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      AUTOHEAL_CONTAINER_LABEL: "autoheal"
+      AUTOHEAL_INTERVAL: 15
+      AUTOHEAL_START_PERIOD: 600
+      AUTOHEAL_DEFAULT_STOP_TIMEOUT: 60
+    restart: always
+
+networks:
+  intranet:
+
+volumes:
+  db-pgdata-var:
+  wbia-database-var:
+  wbia-cache-var:
+  opensearch-var1:
+  wildbook-var:

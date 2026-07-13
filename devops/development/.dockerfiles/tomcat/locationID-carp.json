@@ -1,0 +1,14 @@
+{
+	"description": "Hierarchical Encounter.locationID list. One entry per Lake Manager venue. The 'id' is what goes into encounterLocationId and into matchingSetFilter.locationIds when scoping identification to a venue. Convention: id = 'lm-venue-' + VenueID, so the Lake Manager VenueID maps deterministically to the Wildbook locationID.",
+	"locationID": [
+		{
+			"name": "Grand Lac de Roly",
+			"id": "lm-venue-164",
+			"geospatialInfo": {
+				"lat": 50.0919,
+				"long": 4.5486
+			},
+			"locationID": []
+		}
+	]
+}

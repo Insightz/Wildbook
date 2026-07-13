@@ -1,0 +1,65 @@
+{
+	"_note": "Carp identification config. Hierarchy: genus -> species -> iaClass -> _id_conf. The three carp types (common / mirror / koi) are iaClasses under Cyprinus.carpio. Matching (getMatchingSetQuery) filters candidates by iaClass, so a mirror only ever matches mirrors, a koi only koi, etc. Identification uses HotSpotter, which needs NO trained model -- good for the first end-to-end test. The _detect_conf model tags (carp_v0) only matter once you train a detector/labeler (Rung 3); until then you annotate manually and detection is not invoked.",
+
+	"_global": {
+		"add_images": "http://wbia:5000/api/image/json/",
+		"add_annotations": "http://wbia:5000/api/annot/json/",
+		"start_identify": "http://wbia:5000/api/engine/query/graph/",
+		"identify_review": "http://wbia:5000/api/review/query/graph/",
+		"start_detect": "http://wbia:5000/api/engine/detect/cnn/lightnet/",
+		"detect_review": "http://wbia:5000/api/review/detect/cnn/yolo/",
+		"get_job_status": "http://wbia:5000/api/engine/job/status/",
+		"get_job_result": "http://wbia:5000/api/engine/job/result/"
+	},
+
+	"_default": "@Cyprinus.carpio",
+
+	"Cyprinus": {
+		"carpio": {
+			"_note": "Rung 3 only. This detector/labeler config is inert until you register a trained model as tag 'carp_v0' in WBIA (densenet.ARCHIVE_URL_DICT / lightnet.CONFIG_URL_DICT). For the first test you draw annotations by hand and pick the iaClass, so this block is not used.",
+			"_detect_conf": [
+				{
+					"xclass": "common_carp",
+					"start_detect": "http://wbia:5000/api/engine/detect/cnn/lightnet/",
+					"labeler_algo": "densenet",
+					"labeler_model_tag": "carp_v0",
+					"model_tag": "carp_v0",
+					"nms_thresh": 0.5,
+					"sensitivity": 0.5
+				}
+			],
+
+			"_id_conf": "@Cyprinus.carpio.common_carp._id_conf",
+
+			"common_carp": {
+				"_id_conf": [
+					{
+						"query_config_dict": { "sv_on": true },
+						"description": "HotSpotter pattern-matcher",
+						"default": true
+					}
+				]
+			},
+
+			"mirror_carp": {
+				"_id_conf": [
+					{
+						"query_config_dict": { "sv_on": true },
+						"description": "HotSpotter pattern-matcher",
+						"default": true
+					}
+				]
+			},
+
+			"koi_carp": {
+				"_id_conf": [
+					{
+						"query_config_dict": { "sv_on": true },
+						"description": "HotSpotter pattern-matcher",
+						"default": true
+					}
+				]
+			}
+		}
+	}
+}
